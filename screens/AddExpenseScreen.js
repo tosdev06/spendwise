@@ -240,11 +240,11 @@ export default function AddExpenseScreen({ navigation }) {
         return;
       }
 
-      // Check if budget is set
+      // Check if budget is set in the user's profile
       const { data: userData, error: userError } = await supabase
         .from('users')
         .select('monthly_budget, category_budgets')
-        .eq('id', user.id)
+        .eq('user_id', user.id)
         .single();
 
       if (userError) throw userError;
@@ -258,7 +258,6 @@ export default function AddExpenseScreen({ navigation }) {
         return;
       }
 
-      // AI Check: Warn if this expense exceeds the category budget
       const categoryBudget = userData.category_budgets?.[category];
       if (categoryBudget && categoryBudget > 0) {
         const monthStart = new Date(date.getFullYear(), date.getMonth(), 1).toISOString().split('T')[0];

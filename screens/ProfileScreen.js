@@ -24,6 +24,7 @@ Notifications.setNotificationHandler({
 
 // Flag to enable/disable notifications
 const ENABLE_NOTIFICATIONS = true;
+let hasNotificationPermissions = false; // To check if we can enable/disable
 
 export default function ProfileScreen({ navigation }) {
   const [user, setUser] = useState(null);
@@ -98,6 +99,7 @@ export default function ProfileScreen({ navigation }) {
   const checkNotificationPermissions = async () => {
     if (!ENABLE_NOTIFICATIONS) return;
     const { status } = await Notifications.getPermissionsAsync();
+    hasNotificationPermissions = status === 'granted';
     setNotificationsEnabled(status === 'granted');
   };
 
@@ -108,34 +110,6 @@ export default function ProfileScreen({ navigation }) {
     } catch (error) {
       console.error('Error loading daily reminders setting:', error);
       setDailyRemindersActive(false);
-    }
-  };
-
-  const requestNotificationPermission = async () => {
-    if (!ENABLE_NOTIFICATIONS) {
-      Alert.alert(
-        'Notifications Unavailable',
-        'Push notifications require a development build. Use "npx expo prebuild" to create one.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-
-    // User wants to enable reminders
-    let permissionGranted = notificationsEnabled; // Start with current permission status
-    if (!permissionGranted) {
-      const { status: newStatus } = await Notifications.requestPermissionsAsync();
-      permissionGranted = newStatus === 'granted';
-      setNotificationsEnabled(permissionGranted); // Update permission status
-    }
-
-    if (permissionGranted) {
-      await scheduleDailyReminder();
-      setDailyRemindersActive(true); // Explicitly set active state
-      Alert.alert('Success', 'Daily reminders enabled!'); // Provide feedback
-    } else {
-      Alert.alert('Permission Denied', 'You can enable notifications from your device settings.');
-      setDailyRemindersActive(false); // Ensure switch is off if permission denied
     }
   };
 
@@ -168,11 +142,7 @@ export default function ProfileScreen({ navigation }) {
 
   const toggleDailyReminders = async (newValue) => {
     if (!ENABLE_NOTIFICATIONS) {
-      Alert.alert(
-        'Notifications Unavailable',
-        'Push notifications require a development build. Use "npx expo prebuild" to create one.',
-        [{ text: 'OK' }]
-      );
+      // This case should ideally not be hit if the switch is disabled
       return;
     }
 
@@ -185,16 +155,16 @@ export default function ProfileScreen({ navigation }) {
         status = newStatus;
       }
 
-      setNotificationsEnabled(status === 'granted'); // Update permission status
+      setNotificationsEnabled(status === 'granted');
 
       if (status === 'granted') {
         await scheduleDailyReminder();
         setDailyRemindersActive(true);
         Alert.alert('Success', 'Daily reminders have been enabled!');
       } else {
-        // If permission is still not granted, inform the user and keep the switch off
         Alert.alert('Permission Denied', 'You can enable notifications from your device settings.');
-        setDailyRemindersActive(false);
+        // Revert the switch state if permission is denied
+        setDailyRemindersActive(false); 
       }
     } else {
       // User wants to disable reminders
@@ -354,12 +324,10 @@ export default function ProfileScreen({ navigation }) {
             <View style={styles.settingInfo}>
               <Text style={styles.settingTitle}>Daily Reminders</Text>
               <Text style={styles.settingDescription}>
-                {ENABLE_NOTIFICATIONS
-                  ? 'Get reminded to log expenses daily'
-                  : 'Requires development build in Expo Go'}
-              </Text>
-              <Text style={styles.settingDescription}>
                 {dailyRemindersActive ? 'Active' : 'Inactive'}
+              </Text>
+              <Text style={styles.settingHint}>
+                {!hasNotificationPermissions ? 'Requires a custom app build to enable' : 'Toggle daily reminders'}
               </Text>
             </View>
           </View>
@@ -368,7 +336,7 @@ export default function ProfileScreen({ navigation }) {
             onValueChange={toggleDailyReminders}
             trackColor={{ false: '#CBD5E1', true: '#6366F1' }}
             thumbColor="#FFFFFF"
-            disabled={!ENABLE_NOTIFICATIONS}
+            disabled={!hasNotificationPermissions}
           />
         </View>
 
@@ -583,6 +551,11 @@ const styles = StyleSheet.create({
   settingDescription: {
     fontSize: 12,
     color: '#64748B',
+  },
+  settingHint: {
+    fontSize: 12,
+    color: '#94A3B8',
+    fontStyle: 'italic',
   },
   supportItem: {
     flexDirection: 'row',

@@ -14,10 +14,10 @@ import { supabase, CATEGORIES, COLORS } from '../lib/supabase';
 
 export default function BudgetScreen() {
   const [monthlyBudget, setMonthlyBudget] = useState('');
-  const [categoryBudgets, setCategoryBudgets] = useState({});
-  const [categorySpending, setCategorySpending] = useState({});
   const [loading, setLoading] = useState(false);
-  const [totalSpent, setTotalSpent] = useState(0);
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  // This will hold the single budget record for the month
+  const [budgetData, setBudgetData] = useState(null);
 
   useEffect(() => {
     loadBudgetData();
@@ -28,85 +28,56 @@ export default function BudgetScreen() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      // Load user's monthly budget
-      const { data: userData } = await supabase
+      // Load user's monthly budget from the users table
+      const { data: userData, error } = await supabase
         .from('users')
-        .select('monthly_budget')
+        .select('monthly_budget, category_budgets')
         .eq('id', user.id)
         .single();
-      
+
+      if (error) throw error;
+
       if (userData) {
-        setMonthlyBudget(userData.monthly_budget.toString());
+        setBudgetData(userData); // The whole user object with budget info
+        setMonthlyBudget(userData.monthly_budget ? userData.monthly_budget.toString() : '');
+      } else {
+        // No user data found
+        setBudgetData(null);
+        setMonthlyBudget('');
       }
-
-      // Load category budgets for current month
-      const currentMonth = new Date();
-      currentMonth.setDate(1);
-      
-      const { data: budgets } = await supabase
-        .from('budgets')
-        .select('*')
-        .eq('user_id', user.id)
-        .gte('month', currentMonth.toISOString().split('T')[0])
-        .lte('month', currentMonth.toISOString().split('T')[0]);
-
-      const budgetMap = {};
-      budgets?.forEach(budget => {
-        budgetMap[budget.category] = budget.amount.toString();
-      });
-      setCategoryBudgets(budgetMap);
-
-      // Load spending for current month
-      const monthStart = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
-      const monthEnd = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0);
-
-      const { data: expenses } = await supabase
-        .from('expenses')
-        .select('category, amount')
-        .eq('user_id', user.id)
-        .gte('date', monthStart.toISOString().split('T')[0])
-        .lte('date', monthEnd.toISOString().split('T')[0]);
-
-      const spendingMap = {};
-      let total = 0;
-      
-      Object.values(CATEGORIES).forEach(cat => {
-        spendingMap[cat] = 0;
-      });
-
-      expenses?.forEach(expense => {
-        spendingMap[expense.category] += parseFloat(expense.amount);
-        total += parseFloat(expense.amount);
-      });
-
-      setCategorySpending(spendingMap);
-      setTotalSpent(total);
 
     } catch (error) {
       console.error('Error loading budget data:', error);
     }
   };
 
-  const saveMonthlyBudget = async () => {
+  const saveBudget = async () => {
     const budgetValue = parseFloat(monthlyBudget);
     if (isNaN(budgetValue) || budgetValue < 0) {
       Alert.alert('Error', 'Please enter a valid budget amount');
       return;
     }
 
-    setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
+      setLoading(true);
+
+      // Update the monthly_budget in the users table
       const { error } = await supabase
         .from('users')
-        .update({ monthly_budget: budgetValue })
+        .update({
+          monthly_budget: budgetValue,
+          // Persist existing category budgets
+          category_budgets: budgetData?.category_budgets || {},
+        })
         .eq('id', user.id);
 
       if (error) throw error;
 
-      Alert.alert('Success', 'Monthly budget updated!');
+      Alert.alert('Success', 'Budget saved for the month!');
+      loadBudgetData(); // Refresh the data
     } catch (error) {
       Alert.alert('Error', error.message);
     } finally {
@@ -114,131 +85,9 @@ export default function BudgetScreen() {
     }
   };
 
-  const saveCategoryBudget = async (category, amount) => {
-    const budgetValue = parseFloat(amount);
-    if (isNaN(budgetValue) || budgetValue < 0) {
-      Alert.alert('Error', 'Please enter a valid amount');
-      return;
-    }
-
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const currentMonth = new Date();
-      currentMonth.setDate(1);
-
-      const { error } = await supabase
-        .from('budgets')
-        .upsert({
-          user_id: user.id,
-          category,
-          amount: budgetValue,
-          month: currentMonth.toISOString().split('T')[0],
-        }, {
-          onConflict: 'user_id,category,month',
-        });
-
-      if (error) throw error;
-
-      // Update local state
-      setCategoryBudgets(prev => ({
-        ...prev,
-        [category]: amount,
-      }));
-
-    } catch (error) {
-      Alert.alert('Error', error.message);
-    }
-  };
-
-  const calculateRemaining = (category) => {
-    const budget = parseFloat(categoryBudgets[category] || 0);
-    const spent = categorySpending[category] || 0;
-    return budget - spent;
-  };
-
-  const getProgressColor = (spent, budget) => {
-    if (budget === 0) return '#94A3B8';
-    const percentage = (spent / budget) * 100;
-    if (percentage > 90) return '#EF4444';
-    if (percentage > 70) return '#F59E0B';
-    return '#10B981';
-  };
-
   const formatCurrency = (amount) => {
+    if (isNaN(parseFloat(amount))) return '₦0.00';
     return `₦${parseFloat(amount).toFixed(2)}`;
-  };
-
-  const renderCategoryBudget = (category) => {
-    const budget = parseFloat(categoryBudgets[category] || 0);
-    const spent = categorySpending[category] || 0;
-    const remaining = calculateRemaining(category);
-    const percentage = budget > 0 ? (spent / budget) * 100 : 0;
-
-    return (
-      <View key={category} style={styles.categoryCard}>
-        <View style={styles.categoryHeader}>
-          <View style={styles.categoryInfo}>
-            <View style={[styles.categoryDot, { backgroundColor: COLORS[category.toUpperCase()] }]} />
-            <Text style={styles.categoryName}>{category}</Text>
-          </View>
-          <Text style={styles.categoryBudget}>
-            {formatCurrency(budget)}
-          </Text>
-        </View>
-
-        <ProgressBar
-          progress={budget > 0 ? spent / budget : 0}
-          color={getProgressColor(spent, budget)}
-          style={styles.categoryProgress}
-        />
-
-        <View style={styles.categoryDetails}>
-          <View style={styles.detailItem}>
-            <Text style={styles.detailLabel}>Spent</Text>
-            <Text style={[styles.detailValue, { color: '#1E293B' }]}>
-              {formatCurrency(spent)}
-            </Text>
-          </View>
-          <View style={styles.detailItem}>
-            <Text style={styles.detailLabel}>Remaining</Text>
-            <Text style={[
-              styles.detailValue,
-              { color: remaining >= 0 ? '#10B981' : '#EF4444' }
-            ]}>
-              {formatCurrency(remaining)}
-            </Text>
-          </View>
-          <View style={styles.detailItem}>
-            <Text style={styles.detailLabel}>Used</Text>
-            <Text style={styles.detailValue}>
-              {percentage.toFixed(1)}%
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.budgetInputContainer}>
-          <TextInput
-            style={styles.budgetInput}
-            placeholder="Set budget..."
-            value={categoryBudgets[category] || ''}
-            onChangeText={(value) => setCategoryBudgets(prev => ({
-              ...prev,
-              [category]: value,
-            }))}
-            keyboardType="decimal-pad"
-            placeholderTextColor="#94A3B8"
-          />
-          <TouchableOpacity
-            style={styles.saveButton}
-            onPress={() => saveCategoryBudget(category, categoryBudgets[category] || '0')}
-          >
-            <Text style={styles.saveButtonText}>Save</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
   };
 
   return (
@@ -264,11 +113,11 @@ export default function BudgetScreen() {
             </Text>
           </View>
           <Text style={styles.monthlyBudgetAmount}>
-            {formatCurrency(monthlyBudget)}
+            {formatCurrency(budgetData?.monthly_budget || 0)}
           </Text>
         </View>
 
-        
+
 
         <View style={styles.monthlyBudgetInputContainer}>
           <TextInput
@@ -281,7 +130,7 @@ export default function BudgetScreen() {
           />
           <TouchableOpacity
             style={[styles.monthlySaveButton, loading && styles.buttonDisabled]}
-            onPress={saveMonthlyBudget}
+            onPress={saveBudget}
             disabled={loading}
           >
             <Text style={styles.monthlySaveButtonText}>
@@ -291,7 +140,7 @@ export default function BudgetScreen() {
         </View>
       </View>
 
-     
+
 
       {/* Budget Tips */}
       <View style={styles.tipsCard}>
@@ -299,28 +148,28 @@ export default function BudgetScreen() {
           <Ionicons name="bulb" size={24} color="#F59E0B" />
           <Text style={styles.tipsTitle}>Budgeting Tips</Text>
         </View>
-        
+
         <View style={styles.tipItem}>
           <Ionicons name="checkmark-circle" size={20} color="#10B981" />
           <Text style={styles.tipText}>
             Start with your fixed expenses (rent, tuition)
           </Text>
         </View>
-        
+
         <View style={styles.tipItem}>
           <Ionicons name="checkmark-circle" size={20} color="#10B981" />
           <Text style={styles.tipText}>
             Allocate 20-30% for flexible spending
           </Text>
         </View>
-        
+
         <View style={styles.tipItem}>
           <Ionicons name="checkmark-circle" size={20} color="#10B981" />
           <Text style={styles.tipText}>
             Review and adjust budgets monthly
           </Text>
         </View>
-        
+
         <View style={styles.tipItem}>
           <Ionicons name="checkmark-circle" size={20} color="#10B981" />
           <Text style={styles.tipText}>
@@ -343,7 +192,7 @@ export default function BudgetScreen() {
             <Text style={styles.templateAmount}>₦50,000</Text>
             <Text style={styles.templateLabel}>Basic Student</Text>
           </TouchableOpacity>
-          
+
           <TouchableOpacity
             style={styles.templateButton}
             onPress={() => {
@@ -354,7 +203,7 @@ export default function BudgetScreen() {
             <Text style={styles.templateAmount}>₦100,000</Text>
             <Text style={styles.templateLabel}>Moderate</Text>
           </TouchableOpacity>
-          
+
           <TouchableOpacity
             style={styles.templateButton}
             onPress={() => {
@@ -497,7 +346,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#64748B',
   },
-  
+
   detailItem: {
     alignItems: 'center',
   },

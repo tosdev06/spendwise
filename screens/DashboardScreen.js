@@ -56,15 +56,15 @@ export default function DashboardScreen({ navigation }) {
       const monthStart = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1);
       const monthEnd = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0);
 
-      // Get user data including budget
+      // Get user data including the single monthly budget
       const { data: userData } = await supabase
         .from('users')
-        .select('*')
+        .select('monthly_budget')
         .eq('id', user.id)
         .single();
 
       if (userData) {
-        setBudget(Number(userData.monthly_budget) || 0);  // FIX: Convert to number
+        setBudget(Number(userData.monthly_budget) || 0);
         setUserData(userData);
       }
 
