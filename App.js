@@ -101,7 +101,7 @@ export default function App() {
   if (!appIsReady) {
     return (
       <View style={styles.container}>
-        <Text style={styles.loadingText}>Loading Student Expense Manager...</Text>
+        <Text style={styles.loadingText}>spendwise..........</Text>
       </View>
     );
   }
