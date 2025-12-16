@@ -45,7 +45,7 @@ export default function AddExpenseScreen({ navigation }) {
       setIsOnline(navigator.onLine);
     };
     checkConnection();
-    
+
     // Initialize AI learning system
     initAiLearning();
   }, []);
@@ -90,12 +90,12 @@ export default function AddExpenseScreen({ navigation }) {
         expenses.forEach(exp => {
           categoryCount[exp.category] = (categoryCount[exp.category] || 0) + 1;
         });
-        
+
         const sortedCategories = Object.entries(categoryCount)
           .sort((a, b) => b[1] - a[1])
           .map(([cat]) => cat)
           .slice(0, 3);
-        
+
         setRecentCategories(sortedCategories);
       }
     } catch (error) {
@@ -152,14 +152,14 @@ export default function AddExpenseScreen({ navigation }) {
 
   const handleCategorySelect = (selectedCategory) => {
     setCategory(selectedCategory);
-    
+
     // Learn from user selection if different from AI suggestion
     if (aiLearning && description && suggestedCategory && selectedCategory !== suggestedCategory) {
       aiLearning.learnFromUserCorrection(description, selectedCategory, {
         suggested: suggestedCategory,
         confidence: confidenceScore
       });
-      
+
       Alert.alert(
         'AI Learning',
         `Thanks for the correction! AI will remember this for "${description}"`,
@@ -182,7 +182,7 @@ export default function AddExpenseScreen({ navigation }) {
     }
     try {
       const offlineKey = `offline_expenses_${userId}`;
-      const syncQueueKey = `sync_queue_${userId}`;
+      const syncQueueKey = 'sync_queue';
 
       const savedExpenses = await AsyncStorage.getItem(offlineKey);
       const expenses = savedExpenses ? JSON.parse(savedExpenses) : [];
@@ -191,7 +191,7 @@ export default function AddExpenseScreen({ navigation }) {
       expenses.push({
         ...expenseData,
         local_id: localId,
-        is_synced: false,
+        is_synced: false, // Explicitly mark as not synced
         created_at: new Date().toISOString(),
       });
 
@@ -203,7 +203,7 @@ export default function AddExpenseScreen({ navigation }) {
       queue.push({
         table_name: 'expenses',
         operation: 'INSERT',
-        data: expenseData,
+        data: { ...expenseData, is_synced: false }, // Ensure data in queue is marked as not synced
         local_id: localId,
         user_id: userId,
         created_at: new Date().toISOString(),
@@ -296,69 +296,72 @@ export default function AddExpenseScreen({ navigation }) {
         category,
         description,
         date: date.toISOString().split('T')[0],
-        is_synced: isOnline,
+        is_synced: true, // Assume online save will succeed initially
       };
 
       await continueSubmit(expenseData, user);
 
     } catch (error) {
-      Alert.alert('Error', error.message);
+      Alert.alert('Error', error.message || 'An unexpected error occurred.');
     } finally {
       setLoading(false);
     }
   };
 
-  // A new function to handle the final submission logic
   const continueSubmit = async (expenseData, user) => {
     setLoading(true);
+    let savedSuccessfully = false;
     try {
-    if (isOnline) {
-      // Save directly to Supabase
-      const { error } = await supabase
+      // Always try to save to Supabase first
+      const { error: supabaseError } = await supabase
         .from('expenses')
         .insert([expenseData]);
 
-      if (error) throw error;
+      if (supabaseError) {
+        console.warn('Supabase save failed, attempting local save:', supabaseError.message);
+        // If Supabase save fails, save locally
+        const localId = await saveExpenseLocally({ ...expenseData, is_synced: false }, user.id);
+        if (localId) {
+          Alert.alert(
+            'Saved Offline',
+            'Expense saved locally. It will sync when you\'re back online.'
+          );
+          savedSuccessfully = true;
+        } else {
+          throw new Error('Failed to save expense both online and offline.');
+        }
+      } else {
+        Alert.alert('Success', 'Expense added successfully!');
+        savedSuccessfully = true;
+        // Update AI learning with successful categorization
+        if (aiLearning && suggestedCategory === category) {
+          await aiLearning.learnFromUserCorrection(description, category, {
+            suggested: suggestedCategory,
+            confidence: confidenceScore,
+            wasCorrect: true
+          });
+        }
+      }
+    } catch (error) {
+      Alert.alert('Error submitting expense', error.message);
+    } finally {
+      if (savedSuccessfully) {
+        // Reset form only if saved successfully (either online or offline)
+        setAmount('');
+        setCategory(CATEGORIES.FOOD);
+        setDescription('');
+        setDate(new Date());
+        setSuggestedCategory(null);
+        setCategoryAlternatives([]);
+        setConfidenceScore(0);
 
-      Alert.alert('Success', 'Expense added successfully!');
-      
-      // Update AI learning with successful categorization
-      if (aiLearning && suggestedCategory === category) {
-        await aiLearning.learnFromUserCorrection(description, category, {
-          suggested: suggestedCategory,
-          confidence: confidenceScore,
-          wasCorrect: true
-        });
+        // Navigate back after delay
+        setTimeout(() => {
+          navigation.navigate('Dashboard');
+        }, 1500);
       }
-    } else {
-      // Save locally
-      const localId = await saveExpenseLocally(expenseData, user.id);
-      if (localId) {
-        Alert.alert(
-          'Saved Offline',
-          'Expense saved locally. It will sync when you\'re back online.'
-        );
-      }
+      setLoading(false);
     }
-
-    // Reset form
-    setAmount('');
-    setCategory(CATEGORIES.FOOD);
-    setDescription('');
-    setDate(new Date());
-    setSuggestedCategory(null);
-    setCategoryAlternatives([]);
-    setConfidenceScore(0);
-
-    // Navigate back after delay
-    setTimeout(() => {
-      navigation.navigate('Dashboard');
-    }, 1500);
-  } catch (error) {
-    Alert.alert('Error submitting expense', error.message);
-  } finally {
-    setLoading(false);
-  }
   };
 
   const formatDate = (date) => {
@@ -387,10 +390,10 @@ export default function AddExpenseScreen({ navigation }) {
       <View style={styles.header}>
         <Text style={styles.title}>Add New Expense</Text>
         <View style={[styles.statusBadge, isOnline ? styles.onlineBadge : styles.offlineBadge]}>
-          <Ionicons 
-            name={isOnline ? 'wifi' : 'cloud-offline'} 
-            size={14} 
-            color={isOnline ? '#FFFFFF' : '#1E293B'} 
+          <Ionicons
+            name={isOnline ? 'wifi' : 'cloud-offline'}
+            size={14}
+            color={isOnline ? '#FFFFFF' : '#1E293B'}
           />
           <Text style={[styles.statusText, isOnline ? styles.onlineText : styles.offlineText]}>
             {isOnline ? 'Online' : 'Offline'}
@@ -468,22 +471,22 @@ export default function AddExpenseScreen({ navigation }) {
             dropdownIconColor="#6366F1"
           >
             {Object.values(CATEGORIES).map((cat) => (
-              <Picker.Item 
-                key={cat} 
-                label={cat} 
+              <Picker.Item
+                key={cat}
+                label={cat}
                 value={cat}
                 color={COLORS[cat.toUpperCase()]}
               />
             ))}
           </Picker>
         </View>
-        
+
         {/* AI Suggested Categories */}
         {categoryAlternatives.length > 0 && (
           <View style={styles.aiSuggestions}>
             <Text style={styles.aiSuggestionsTitle}>AI Suggestions:</Text>
-            <ScrollView 
-              horizontal 
+            <ScrollView
+              horizontal
               showsHorizontalScrollIndicator={false}
               style={styles.aiSuggestionsList}
             >
@@ -558,10 +561,10 @@ export default function AddExpenseScreen({ navigation }) {
         onPress={handleSubmit}
         disabled={loading}
       >
-        <Ionicons 
-          name={isOnline ? "cloud-upload" : "save"} 
-          size={24} 
-          color="#FFFFFF" 
+        <Ionicons
+          name={isOnline ? "cloud-upload" : "save"}
+          size={24}
+          color="#FFFFFF"
         />
         <Text style={styles.submitButtonText}>
           {loading ? 'Saving...' : isOnline ? 'Save Expense' : 'Save Offline'}
@@ -596,12 +599,12 @@ export default function AddExpenseScreen({ navigation }) {
                 onPress={() => handleCategorySelect(cat)}
               >
                 <View style={[styles.recentIcon, { backgroundColor: COLORS[cat.toUpperCase()] + '20' }]}>
-                  <Ionicons 
+                  <Ionicons
                     name={
                       cat === CATEGORIES.FOOD ? 'restaurant' :
-                      cat === CATEGORIES.TRANSPORT ? 'car' :
-                      cat === CATEGORIES.ACADEMICS ? 'school' :
-                      cat === CATEGORIES.ENTERTAINMENT ? 'film' : 'cube'
+                        cat === CATEGORIES.TRANSPORT ? 'car' :
+                          cat === CATEGORIES.ACADEMICS ? 'school' :
+                            cat === CATEGORIES.ENTERTAINMENT ? 'film' : 'cube'
                     }
                     size={20}
                     color={COLORS[cat.toUpperCase()]}

@@ -10,27 +10,26 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-// Temporarily disabled notifications for Expo Go compatibility
-// import * as Notifications from 'expo-notifications';
+import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 
-// Temporarily disable notification configuration for Expo Go
-// Notifications.setNotificationHandler({
-//   handleNotification: async () => ({
-//     shouldShowAlert: true,
-//     shouldPlaySound: true,
-//     shouldSetBadge: true,
-//   }),
-// });
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
 
 // Flag to enable/disable notifications
-const ENABLE_NOTIFICATIONS = false;
+const ENABLE_NOTIFICATIONS = true;
 
 export default function ProfileScreen({ navigation }) {
   const [user, setUser] = useState(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [syncInProgress, setSyncInProgress] = useState(false);
+  const [dailyRemindersActive, setDailyRemindersActive] = useState(false); // Reflects user's choice for reminders
   const [statsLoading, setStatsLoading] = useState(true);
   const [stats, setStats] = useState({
     totalExpenses: 0,
@@ -42,7 +41,8 @@ export default function ProfileScreen({ navigation }) {
     useCallback(() => {
       loadUserData();
       if (ENABLE_NOTIFICATIONS) {
-        checkNotificationPermissions();
+        checkNotificationPermissions(); // Check permission status
+        loadDailyRemindersSetting(); // Load user's preference
       }
     }, [])
   );
@@ -97,9 +97,18 @@ export default function ProfileScreen({ navigation }) {
 
   const checkNotificationPermissions = async () => {
     if (!ENABLE_NOTIFICATIONS) return;
-    // const { status } = await Notifications.getPermissionsAsync();
-    // setNotificationsEnabled(status === 'granted');
-    setNotificationsEnabled(false);
+    const { status } = await Notifications.getPermissionsAsync();
+    setNotificationsEnabled(status === 'granted');
+  };
+
+  const loadDailyRemindersSetting = async () => {
+    try {
+      const setting = await AsyncStorage.getItem('daily_reminders_active');
+      setDailyRemindersActive(setting === 'true');
+    } catch (error) {
+      console.error('Error loading daily reminders setting:', error);
+      setDailyRemindersActive(false);
+    }
   };
 
   const requestNotificationPermission = async () => {
@@ -111,43 +120,95 @@ export default function ProfileScreen({ navigation }) {
       );
       return;
     }
-    
-    // const { status } = await Notifications.requestPermissionsAsync();
-    // setNotificationsEnabled(status === 'granted');
-    
-    // if (status === 'granted') {
-    //   scheduleDailyReminder();
-    //   Alert.alert('Success', 'Daily reminders enabled!');
-    // }
-    
-    Alert.alert('Notifications', 'Feature requires development build in Expo Go');
+
+    // User wants to enable reminders
+    let permissionGranted = notificationsEnabled; // Start with current permission status
+    if (!permissionGranted) {
+      const { status: newStatus } = await Notifications.requestPermissionsAsync();
+      permissionGranted = newStatus === 'granted';
+      setNotificationsEnabled(permissionGranted); // Update permission status
+    }
+
+    if (permissionGranted) {
+      await scheduleDailyReminder();
+      setDailyRemindersActive(true); // Explicitly set active state
+      Alert.alert('Success', 'Daily reminders enabled!'); // Provide feedback
+    } else {
+      Alert.alert('Permission Denied', 'You can enable notifications from your device settings.');
+      setDailyRemindersActive(false); // Ensure switch is off if permission denied
+    }
   };
 
   const scheduleDailyReminder = async () => {
     if (!ENABLE_NOTIFICATIONS) return;
-    // await Notifications.cancelAllScheduledNotificationsAsync();
-    
-    // await Notifications.scheduleNotificationAsync({
-    //   content: {
-    //     title: "📊 Time to log your expenses!",
-    //     body: "Don't forget to track today's spending for better budgeting.",
-    //     sound: true,
-    //     data: { type: 'daily_reminder' },
-    //   },
-    //   trigger: {
-    //     hour: 20, // 8 PM
-    //     minute: 0,
-    //     repeats: true,
-    //   },
-    // });
+    await Notifications.cancelAllScheduledNotificationsAsync();
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "📊 Time to log your expenses!",
+        body: "Don't forget to track today's spending for better budgeting.",
+        sound: true,
+        data: { type: 'daily_reminder' },
+      },
+      trigger: {
+        hour: 20, // 8 PM (20:00)
+        minute: 0,
+        repeats: true,
+      },
+    });
+    await AsyncStorage.setItem('daily_reminders_active', 'true');
+    console.log('Daily reminders scheduled.');
   };
 
+  const cancelDailyReminders = async () => {
+    if (!ENABLE_NOTIFICATIONS) return;
+    await Notifications.cancelAllScheduledNotificationsAsync();
+    await AsyncStorage.setItem('daily_reminders_active', 'false');
+    console.log('Daily reminders cancelled.');
+  };
+
+  const toggleDailyReminders = async (newValue) => {
+    if (!ENABLE_NOTIFICATIONS) {
+      Alert.alert(
+        'Notifications Unavailable',
+        'Push notifications require a development build. Use "npx expo prebuild" to create one.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    if (newValue) {
+      // User wants to enable reminders
+      let { status } = await Notifications.getPermissionsAsync();
+      if (status !== 'granted') {
+        // Request permission if not already granted
+        const { status: newStatus } = await Notifications.requestPermissionsAsync();
+        status = newStatus;
+      }
+
+      setNotificationsEnabled(status === 'granted'); // Update permission status
+
+      if (status === 'granted') {
+        await scheduleDailyReminder();
+        setDailyRemindersActive(true);
+        Alert.alert('Success', 'Daily reminders have been enabled!');
+      } else {
+        // If permission is still not granted, inform the user and keep the switch off
+        Alert.alert('Permission Denied', 'You can enable notifications from your device settings.');
+        setDailyRemindersActive(false);
+      }
+    } else {
+      // User wants to disable reminders
+      await cancelDailyReminders();
+      setDailyRemindersActive(false);
+      Alert.alert('Success', 'Daily reminders have been disabled.');
+    }
+  };
   const syncOfflineData = async () => {
     setSyncInProgress(true);
     try {
       const syncQueueJSON = await AsyncStorage.getItem('sync_queue');
       const syncQueue = syncQueueJSON ? JSON.parse(syncQueueJSON) : [];
-      
+
       if (syncQueue.length === 0) {
         Alert.alert('Info', 'No offline data to sync');
         return;
@@ -169,7 +230,7 @@ export default function ProfileScreen({ navigation }) {
             if (error) throw error;
           }
           // Handle UPDATE and DELETE operations similarly
-          
+
           syncedCount++;
         } catch (error) {
           console.error('Sync error:', error);
@@ -178,12 +239,7 @@ export default function ProfileScreen({ navigation }) {
       }
 
       // Clear synced items
-      const remainingQueue = syncQueue.filter(item => {
-        // In real app, mark items as synced instead of filtering
-        return false;
-      });
-
-      await AsyncStorage.setItem('sync_queue', JSON.stringify(remainingQueue));
+      await AsyncStorage.removeItem('sync_queue');
 
       Alert.alert(
         'Sync Complete',
@@ -236,13 +292,13 @@ export default function ProfileScreen({ navigation }) {
               await supabase.from('expenses').delete().eq('user_id', authUser.id);
               await supabase.from('budgets').delete().eq('user_id', authUser.id);
               await supabase.from('users').delete().eq('id', authUser.id);
-              
+
               // Delete from auth
               await supabase.auth.admin.deleteUser(authUser.id);
-              
+
               // Clear local storage
               await AsyncStorage.clear();
-              
+
               Alert.alert('Account Deleted', 'Your account has been deleted successfully.');
               navigation.replace('Auth');
             } catch (error) {
@@ -286,11 +342,11 @@ export default function ProfileScreen({ navigation }) {
         </View>
       </View>
 
-     
+
       {/* Settings Section */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Settings</Text>
-        
+
         {/* Notifications - Disabled for Expo Go */}
         <View style={styles.settingItem}>
           <View style={styles.settingLeft}>
@@ -298,15 +354,18 @@ export default function ProfileScreen({ navigation }) {
             <View style={styles.settingInfo}>
               <Text style={styles.settingTitle}>Daily Reminders</Text>
               <Text style={styles.settingDescription}>
-                {ENABLE_NOTIFICATIONS 
-                  ? 'Get reminded to log expenses daily' 
+                {ENABLE_NOTIFICATIONS
+                  ? 'Get reminded to log expenses daily'
                   : 'Requires development build in Expo Go'}
+              </Text>
+              <Text style={styles.settingDescription}>
+                {dailyRemindersActive ? 'Active' : 'Inactive'}
               </Text>
             </View>
           </View>
           <Switch
-            value={notificationsEnabled}
-            onValueChange={requestNotificationPermission}
+            value={dailyRemindersActive}
+            onValueChange={toggleDailyReminders}
             trackColor={{ false: '#CBD5E1', true: '#6366F1' }}
             thumbColor="#FFFFFF"
             disabled={!ENABLE_NOTIFICATIONS}
@@ -363,17 +422,17 @@ export default function ProfileScreen({ navigation }) {
       {/* Support Section */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Support</Text>
-        
+
         <TouchableOpacity style={styles.supportItem}>
           <Ionicons name="help-circle" size={20} color="#6366F1" />
           <Text style={styles.supportText}>Help & FAQ</Text>
         </TouchableOpacity>
-        
+
         <TouchableOpacity style={styles.supportItem}>
           <Ionicons name="chatbubble" size={20} color="#6366F1" />
           <Text style={styles.supportText}>Contact Support</Text>
         </TouchableOpacity>
-        
+
         <TouchableOpacity style={styles.supportItem}>
           <Ionicons name="star" size={20} color="#6366F1" />
           <Text style={styles.supportText}>Rate the App</Text>
@@ -386,7 +445,7 @@ export default function ProfileScreen({ navigation }) {
           <Ionicons name="log-out" size={20} color="#EF4444" />
           <Text style={styles.dangerButtonText}>Logout</Text>
         </TouchableOpacity>
-        
+
       </View>
 
       {/* App Info */}
