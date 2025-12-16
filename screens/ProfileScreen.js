@@ -24,7 +24,6 @@ Notifications.setNotificationHandler({
 
 // Flag to enable/disable notifications
 const ENABLE_NOTIFICATIONS = true;
-let hasNotificationPermissions = false; // To check if we can enable/disable
 
 export default function ProfileScreen({ navigation }) {
   const [user, setUser] = useState(null);
@@ -99,7 +98,6 @@ export default function ProfileScreen({ navigation }) {
   const checkNotificationPermissions = async () => {
     if (!ENABLE_NOTIFICATIONS) return;
     const { status } = await Notifications.getPermissionsAsync();
-    hasNotificationPermissions = status === 'granted';
     setNotificationsEnabled(status === 'granted');
   };
 
@@ -155,7 +153,7 @@ export default function ProfileScreen({ navigation }) {
         status = newStatus;
       }
 
-      setNotificationsEnabled(status === 'granted');
+      setNotificationsEnabled(status === 'granted'); // Ensure this state is updated
 
       if (status === 'granted') {
         await scheduleDailyReminder();
@@ -164,7 +162,7 @@ export default function ProfileScreen({ navigation }) {
       } else {
         Alert.alert('Permission Denied', 'You can enable notifications from your device settings.');
         // Revert the switch state if permission is denied
-        setDailyRemindersActive(false); 
+        setDailyRemindersActive(false);
       }
     } else {
       // User wants to disable reminders
@@ -327,7 +325,7 @@ export default function ProfileScreen({ navigation }) {
                 {dailyRemindersActive ? 'Active' : 'Inactive'}
               </Text>
               <Text style={styles.settingHint}>
-                {!hasNotificationPermissions ? 'Requires a custom app build to enable' : 'Toggle daily reminders'}
+                {!notificationsEnabled ? 'Requires a custom app build to enable' : 'Toggle daily reminders'}
               </Text>
             </View>
           </View>
@@ -336,7 +334,7 @@ export default function ProfileScreen({ navigation }) {
             onValueChange={toggleDailyReminders}
             trackColor={{ false: '#CBD5E1', true: '#6366F1' }}
             thumbColor="#FFFFFF"
-            disabled={!hasNotificationPermissions}
+            disabled={!notificationsEnabled} // Use state variable for disabling
           />
         </View>
 

@@ -244,7 +244,7 @@ export default function AddExpenseScreen({ navigation }) {
       const { data: userData, error: userError } = await supabase
         .from('users')
         .select('monthly_budget, category_budgets')
-        .eq('user_id', user.id)
+        .eq('id', user.id)
         .single();
 
       if (userError) throw userError;
